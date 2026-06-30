@@ -478,13 +478,21 @@ function SessionView({ docs, session }: { docs: LocalDocument[]; session: Sessio
       return updated
     })
     if (debounceRef.current) clearTimeout(debounceRef.current)
-    debounceRef.current = setTimeout(() => {
-      const question = transcriptRef.current.slice(-600).trim()
-      const cooldownElapsed = Date.now() - lastAnswerTimeRef.current > 35_000
-      if (question && isQuestion(question) && cooldownElapsed) {
-        generateAnswerRef.current(question)
-      }
-    }, 2500)
+
+    const question = transcriptRef.current.slice(-600).trim()
+    const cooldownElapsed = Date.now() - lastAnswerTimeRef.current > 30_000
+    // Fire immediately once we have ≥8 words and recognise a question — while interviewer is still speaking
+    if (question.split(/\s+/).length >= 8 && isQuestion(question) && cooldownElapsed) {
+      generateAnswerRef.current(question)
+    } else {
+      // Fallback: fire after 2s of silence for slow speakers or delayed question detection
+      debounceRef.current = setTimeout(() => {
+        const q = transcriptRef.current.slice(-600).trim()
+        if (q && isQuestion(q) && Date.now() - lastAnswerTimeRef.current > 30_000) {
+          generateAnswerRef.current(q)
+        }
+      }, 2000)
+    }
   }, [])
 
   const recorder = useAudioRecorder(onTranscriptChunk, user?.groq_key ?? '')
