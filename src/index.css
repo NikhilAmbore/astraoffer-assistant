@@ -1,0 +1,39 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── Base ── */
+* { box-sizing: border-box; }
+body { margin: 0; font-family: 'Inter', system-ui, sans-serif; background: transparent; }
+#root { background: transparent; }
+
+/* ── Input placeholder color (B&W theme) ── */
+input::placeholder,
+textarea::placeholder { color: rgba(255,255,255,0.22) !important; }
+
+/* ── Force dark color scheme for native inputs ── */
+input, textarea, select { color-scheme: dark; }
+
+/* ── Custom scrollbar ── */
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 2px; }
+
+/* ── Drag region for frameless window ── */
+.drag-region { -webkit-app-region: drag; }
+.no-drag { -webkit-app-region: no-drag; }
+
+/* ── Animations ── */
+@keyframes blink { 0%,100% { opacity: 1; } 50% { opacity: 0; } }
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+.cursor-blink { display: inline-block; width: 2px; height: 1em;
+  background: #00D4FF; margin-left: 2px; vertical-align: middle;
+  animation: blink 0.9s step-end infinite; }
+
+/* ── Glassmorphism panel ── */
+.glass {
+  background: rgba(10, 37, 64, 0.82);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border: 1px solid rgba(0, 212, 255, 0.18);
+}

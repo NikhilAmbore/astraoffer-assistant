@@ -1,0 +1,9 @@
+.env
+node_modules/
+dist/
+dist-electron/
+*.dmg
+*.exe
+*.AppImage
+*.blockmap
+release/
