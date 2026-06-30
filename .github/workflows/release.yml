@@ -1,0 +1,65 @@
+name: Build & Release
+
+# Triggers on any version tag push: git tag v1.1.0 && git push origin v1.1.0
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:  # also allows manual trigger from GitHub UI
+
+permissions:
+  contents: write  # needed to create/update releases
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14        # Apple Silicon (M1) runner
+            name: mac-arm64
+            artifact_glob: "dist/*.dmg"
+
+          - os: windows-latest  # Windows Server 2022
+            name: windows
+            artifact_glob: "dist/*.exe"
+
+    runs-on: ${{ matrix.os }}
+    name: Build (${{ matrix.name }})
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build renderer + electron + package
+        run: npm run build
+        env:
+          # Skip Apple code signing (no cert — users right-click → Open)
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+          # Skip Windows code signing
+          WIN_CSC_IDENTITY_AUTO_DISCOVERY: false
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: List dist output
+        shell: bash
+        run: ls -lh dist/
+
+      - name: Upload artifacts to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ matrix.artifact_glob }}
+          # Auto-generate release notes from commit messages
+          generate_release_notes: true
+          # Mark as pre-release if tag contains '-beta', '-rc', etc.
+          prerelease: ${{ contains(github.ref_name, '-') }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

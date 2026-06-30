@@ -41,12 +41,20 @@
   "build": {
     "appId": "com.astraoffer.assistant",
     "productName": "AstraOffer Assistant",
+    "artifactName": "AstraOffer-Assistant-${version}-${arch}.${ext}",
     "mac": {
       "category": "public.app-category.productivity",
-      "target": "dmg"
+      "target": [{ "target": "dmg", "arch": ["arm64"] }]
     },
     "win": {
-      "target": "nsis"
+      "target": [{ "target": "nsis", "arch": ["x64"] }],
+      "requestedExecutionLevel": "asInvoker"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
     },
     "files": [
       "dist/**/*",
