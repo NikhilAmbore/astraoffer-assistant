@@ -30,9 +30,9 @@ interface ElectronAPI {
 
   setScreenShareMode: (mode: 'overlay-only' | 'full-hidden' | 'off') => Promise<void>
 
-  claudeStream:   (p: { apiKey: string; systemPrompt: string; userMessage: string }) => Promise<string>
+  claudeStream:   (p: { systemPrompt: string; userMessage: string }) => Promise<string>
   onClaudeChunk:  (cb: (text: string) => void) => void
-  groqTranscribe: (p: { apiKey: string; buffer: ArrayBuffer }) => Promise<string>
+  groqTranscribe: (p: { buffer: ArrayBuffer }) => Promise<string>
 
   removeAllListeners: (channel: string) => void
 }

@@ -2,24 +2,20 @@
 // All API calls go through Electron main process to avoid CORS.
 
 // ─── Groq Whisper transcription ───────────────────────────────────────────────
-export async function transcribeAudio(audioBlob: Blob, apiKey: string): Promise<string> {
-  if (!apiKey) throw new Error('Groq API key not set — add it in API Keys tab')
+export async function transcribeAudio(audioBlob: Blob): Promise<string> {
   const buffer = await audioBlob.arrayBuffer()
-  const text   = await window.electronAPI?.groqTranscribe({ apiKey, buffer })
+  const text   = await window.electronAPI?.groqTranscribe({ buffer })
   return (text ?? '').trim()
 }
 
 // ─── Claude streaming ─────────────────────────────────────────────────────────
 export async function streamAnswer(params: {
-  apiKey: string
   systemPrompt: string
   userMessage: string
   onChunk: (text: string) => void
   onDone: () => void
   signal?: AbortSignal
 }): Promise<void> {
-  if (!params.apiKey) throw new Error('Claude API key not set')
-
   const api = window.electronAPI
   if (!api) throw new Error('Electron API not available')
 
@@ -27,7 +23,6 @@ export async function streamAnswer(params: {
 
   try {
     await api.claudeStream({
-      apiKey:       params.apiKey,
       systemPrompt: params.systemPrompt,
       userMessage:  params.userMessage,
     })
@@ -41,14 +36,12 @@ export async function streamAnswer(params: {
 export async function analyzeScreen(
   base64DataUrl: string,
   question: string,
-  apiKey: string,
 ): Promise<string> {
-  if (!apiKey || !window.electronAPI) return ''
+  if (!window.electronAPI) return ''
   let result = ''
   await new Promise<void>(resolve => {
     window.electronAPI!.onClaudeChunk(t => { result += t })
     window.electronAPI!.claudeStream({
-      apiKey,
       systemPrompt: 'You are analyzing a meeting screen. Be brief — one sentence max.',
       userMessage: JSON.stringify([
         { type: 'image', source: { type: 'base64', media_type: 'image/png', data: base64DataUrl.split(',')[1] } },

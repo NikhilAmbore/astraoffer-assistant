@@ -33,11 +33,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setScreenShareMode: (mode: 'overlay-only' | 'full-hidden' | 'off') =>
     ipcRenderer.invoke('set-screen-share-mode', mode),
 
-  claudeStream: (p: { apiKey: string; systemPrompt: string; userMessage: string }) =>
+  claudeStream: (p: { systemPrompt: string; userMessage: string }) =>
     ipcRenderer.invoke('claude:stream', p),
   onClaudeChunk: (cb: (text: string) => void) =>
     ipcRenderer.on('claude:chunk', (_e, t) => cb(t)),
-  groqTranscribe: (p: { apiKey: string; buffer: ArrayBuffer }) =>
+  groqTranscribe: (p: { buffer: ArrayBuffer }) =>
     ipcRenderer.invoke('groq:transcribe', p),
 
   removeAllListeners: (ch: string) =>

@@ -1,3 +1,7 @@
+// Injected at build time via vite define — values come from .env / CI secrets
+declare const __CLAUDE_KEY__: string
+declare const __GROQ_KEY__: string
+
 import {
   app,
   BrowserWindow,
@@ -211,12 +215,12 @@ function registerIPC() {
 
   // Claude streaming (no CORS — Node has no origin restrictions)
   ipcMain.handle('claude:stream', async (event, {
-    apiKey, systemPrompt, userMessage,
-  }: { apiKey: string; systemPrompt: string; userMessage: string }) => {
+    systemPrompt, userMessage,
+  }: { systemPrompt: string; userMessage: string }) => {
     const res = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
-        'x-api-key': apiKey,
+        'x-api-key': __CLAUDE_KEY__,
         'anthropic-version': '2023-06-01',
         'content-type': 'application/json',
       },
@@ -266,8 +270,8 @@ function registerIPC() {
 
   // Groq Whisper transcription (no CORS)
   ipcMain.handle('groq:transcribe', async (_e, {
-    apiKey, buffer,
-  }: { apiKey: string; buffer: ArrayBuffer }) => {
+    buffer,
+  }: { buffer: ArrayBuffer }) => {
     const form = new FormData()
     form.append('file', new Blob([buffer], { type: 'audio/webm' }), 'audio.webm')
     form.append('model', 'whisper-large-v3-turbo')
@@ -276,7 +280,7 @@ function registerIPC() {
 
     const res = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
       method: 'POST',
-      headers: { Authorization: `Bearer ${apiKey}` },
+      headers: { Authorization: `Bearer ${__GROQ_KEY__}` },
       body: form,
     })
     if (!res.ok) throw new Error(await res.text())

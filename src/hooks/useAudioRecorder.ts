@@ -114,7 +114,6 @@ async function acquireSystemAudio(): Promise<{ stream: MediaStream; source: Audi
 // ─── Hook ─────────────────────────────────────────────────────────────────────
 export function useAudioRecorder(
   onTranscriptChunk: (text: string) => void,
-  groqKey: string,
 ): UseAudioRecorderReturn {
   const [isListening, setIsListening] = useState(false)
   const [transcript,  setTranscript]  = useState('')
@@ -143,7 +142,7 @@ export function useAudioRecorder(
     if (blob.size < 3000) return  // silence / empty chunk
 
     try {
-      const text = await transcribeAudio(blob, groqKey)
+      const text = await transcribeAudio(blob)
       if (text && activeRef.current) {
         setError(null)
         setTranscript(prev => `${prev} ${text}`.slice(-3000).trimStart())
@@ -152,7 +151,7 @@ export function useAudioRecorder(
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     }
-  }, [onTranscriptChunk, groqKey])
+  }, [onTranscriptChunk])
 
   const startListening = useCallback(async () => {
     setError(null)

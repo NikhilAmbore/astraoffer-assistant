@@ -4,7 +4,6 @@ import { getLocalDocuments, saveLocalDocument, LocalDocument } from './lib/local
 import { streamAnswer, transcribeAudio, buildSystemPrompt, buildCodingSystemPrompt, analyzeScreen, isQuestion, SessionContext, CODING_LANGS, CodingLang } from './lib/ai'
 import { useAudioRecorder } from './hooks/useAudioRecorder'
 import DocumentUpload from './components/DocumentUpload'
-import ApiKeySetup from './components/ApiKeySetup'
 import Login from './components/Login'
 
 type AppScreen   = 'setup' | 'session'
@@ -28,7 +27,6 @@ function Main() {
   const { user, signOut } = useAuth()
   const [screen,    setScreen]    = useState<AppScreen>('setup')
   const [minimized, setMinimized] = useState(false)
-  const [showKeys,  setShowKeys]  = useState(false)
   const [docs,      setDocs]      = useState<LocalDocument[]>([])
   const [session,   setSession]   = useState<SessionContext>(() => {
     try { return JSON.parse(localStorage.getItem(SESSION_KEY) || '{}') } catch { return {} as SessionContext }
@@ -121,23 +119,10 @@ function Main() {
           {screen === 'session' && (
             <button onClick={() => setScreen('setup')} style={hBtn} title="Back to setup">←</button>
           )}
-          <button onClick={() => setShowKeys(v => !v)} style={hBtn} title="API Keys">⚙</button>
           <button onClick={signOut}                    style={hBtn} title="Sign out">↩</button>
           <button onClick={() => setMinimized(true)}   style={{ ...hBtn, paddingInline: 10 }}>−</button>
         </div>
       </div>
-
-      {/* API Keys panel */}
-      {showKeys && (
-        <div style={{
-          padding: '10px 14px 12px',
-          borderBottom: '1px solid rgba(255,255,255,0.06)',
-          background: 'rgba(255,255,255,0.02)',
-          flexShrink: 0, maxHeight: 260, overflowY: 'auto',
-        }}>
-          <ApiKeySetup />
-        </div>
-      )}
 
       {/* Screen router */}
       <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
@@ -352,8 +337,6 @@ function SetupView({ docs, session, onDocsChange, onSessionChange, onStart }: {
 
 // ─── Session view ─────────────────────────────────────────────────────────────
 function SessionView({ docs, session }: { docs: LocalDocument[]; session: SessionContext }) {
-  const { user } = useAuth()
-
   const [transcript,       setTranscript]       = useState('')
   const [liveAnswer,       setLiveAnswer]       = useState('')
   const [history,          setHistory]          = useState<string[]>([])
@@ -411,7 +394,7 @@ function SessionView({ docs, session }: { docs: LocalDocument[]; session: Sessio
       if (!b64) return
       const q = transcriptRef.current.slice(-300)
       if (!q) return
-      const ctx = await analyzeScreen(b64, q, user?.claude_key ?? '')
+      const ctx = await analyzeScreen(b64, q)
       if (ctx) setScreenCtx(ctx)
     }, 12000)
     return () => { if (captureTimer.current) clearInterval(captureTimer.current) }
@@ -441,7 +424,7 @@ function SessionView({ docs, session }: { docs: LocalDocument[]; session: Sessio
       } else {
         const b64 = await window.electronAPI?.captureScreen()
         if (b64 && transcriptRef.current) {
-          const ctx = await analyzeScreen(b64, transcriptRef.current.slice(-300), user?.claude_key ?? '')
+          const ctx = await analyzeScreen(b64, transcriptRef.current.slice(-300))
           if (ctx) setScreenCtx(ctx)
           generateAnswerRef.current(transcriptRef.current.slice(-600))
         }
@@ -495,7 +478,7 @@ function SessionView({ docs, session }: { docs: LocalDocument[]; session: Sessio
     }
   }, [])
 
-  const recorder = useAudioRecorder(onTranscriptChunk, user?.groq_key ?? '')
+  const recorder = useAudioRecorder(onTranscriptChunk)
 
   async function pttStart() {
     if (pttRef.current) return
@@ -523,7 +506,7 @@ function SessionView({ docs, session }: { docs: LocalDocument[]; session: Sessio
     if (blob.size < 3000) return
     setPttTranscribing(true)
     try {
-      const text = await transcribeAudio(blob, user?.groq_key ?? '')
+      const text = await transcribeAudio(blob)
       if (text) {
         setTranscript(prev => {
           const updated = (prev ? `${prev} ${text}` : text).slice(-3000)
@@ -558,7 +541,6 @@ function SessionView({ docs, session }: { docs: LocalDocument[]; session: Sessio
   }
 
   const generateAnswer = useCallback(async (text: string) => {
-    if (!user?.claude_key) { setAiError('Claude API key not set — open ⚙ to add it'); return }
     setAiError('')
     abortRef.current?.abort()
     answerRef.current = ''
@@ -574,7 +556,6 @@ function SessionView({ docs, session }: { docs: LocalDocument[]; session: Sessio
 
     try {
       await streamAnswer({
-        apiKey: user.claude_key,
         systemPrompt,
         userMessage: buildUserMessage(text),
         signal: ctrl.signal,
@@ -593,14 +574,13 @@ function SessionView({ docs, session }: { docs: LocalDocument[]; session: Sessio
       setGenerating(false)
       if (e instanceof Error && e.name !== 'AbortError') setAiError(e.message)
     }
-  }, [docs, screenCtx, session, answerStyle, user])
+  }, [docs, screenCtx, session, answerStyle])
 
   useEffect(() => { generateAnswerRef.current = generateAnswer }, [generateAnswer])
   useEffect(() => { sessionModeRef.current = sessionMode }, [sessionMode])
 
   // ── Code solver ──────────────────────────────────────────────────────────────
   const generateCodeSolution = useCallback(async (base64: string | null, transcript: string) => {
-    if (!user?.claude_key) { setAiError('Claude API key not set'); return }
     setAiError('')
     codeAbortRef.current?.abort()
     codeRawRef.current = ''
@@ -619,7 +599,6 @@ function SessionView({ docs, session }: { docs: LocalDocument[]; session: Sessio
 
     try {
       await streamAnswer({
-        apiKey:       user.claude_key,
         systemPrompt,
         userMessage,
         onChunk: chunk => {
@@ -633,7 +612,7 @@ function SessionView({ docs, session }: { docs: LocalDocument[]; session: Sessio
       setCodeSolving(false)
       if (e instanceof Error && e.name !== 'AbortError') setAiError(e.message)
     }
-  }, [user, codingLang, session])
+  }, [codingLang, session])
 
   const scanAndSolve = useCallback(async () => {
     setCodeScanning(true)
