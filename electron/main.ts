@@ -277,6 +277,9 @@ function registerIPC() {
     form.append('model', 'whisper-large-v3-turbo')
     form.append('language', 'en')
     form.append('response_format', 'json')
+    form.append('temperature', '0')
+    // Primes Whisper with interview context so technical terms are recognized correctly
+    form.append('prompt', 'Technical software engineering interview. Topics: algorithms, data structures, system design, React, TypeScript, JavaScript, Python, Java, APIs, databases, microservices, AWS, Docker, Kubernetes, distributed systems, scalability, object-oriented programming.')
 
     const res = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
       method: 'POST',

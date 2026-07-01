@@ -374,8 +374,10 @@ function SessionView({ docs, session }: { docs: LocalDocument[]; session: Sessio
   const answerBodyRef      = useRef<HTMLDivElement>(null)
   const codeBodyRef        = useRef<HTMLDivElement>(null)
   const sessionModeRef     = useRef<'interview' | 'code'>('interview')
-  // Cooldown: don't auto-trigger a new answer for 35s after one starts
-  const lastAnswerTimeRef = useRef(0)
+  // Cooldown: don't auto-trigger a new answer for 20s after one starts
+  const lastAnswerTimeRef  = useRef(0)
+  // Accumulates chunks for the CURRENT question; resets after each answer fires
+  const currentQRef        = useRef('')
 
   const shownAnswer = historyIdx === -1 ? liveAnswer : (history[historyIdx] ?? '')
 
@@ -455,26 +457,34 @@ function SessionView({ docs, session }: { docs: LocalDocument[]; session: Sessio
   }
 
   const onTranscriptChunk = useCallback((chunk: string) => {
+    // Update rolling transcript (for display + screen context)
     setTranscript(prev => {
       const updated = (prev ? `${prev} ${chunk}` : chunk).slice(-3000)
       transcriptRef.current = updated
       return updated
     })
+
+    // Accumulate chunks for the CURRENT question (resets after each answer fires)
+    currentQRef.current = `${currentQRef.current} ${chunk}`.trim().slice(-800)
+
     if (debounceRef.current) clearTimeout(debounceRef.current)
 
-    const question = transcriptRef.current.slice(-600).trim()
-    const cooldownElapsed = Date.now() - lastAnswerTimeRef.current > 30_000
-    // Fire immediately once we have ≥8 words and recognise a question — while interviewer is still speaking
-    if (question.split(/\s+/).length >= 8 && isQuestion(question) && cooldownElapsed) {
-      generateAnswerRef.current(question)
-    } else {
-      // Fallback: fire after 2s of silence for slow speakers or delayed question detection
+    const question = currentQRef.current
+    const wordCount = question.split(/\s+/).length
+    const cooldownElapsed = Date.now() - lastAnswerTimeRef.current > 20_000
+
+    if (!cooldownElapsed) return
+
+    // After each 5s chunk, schedule a trigger with a 1.5s silence window.
+    // This lets the interviewer finish their sentence before we answer.
+    if (wordCount >= 6 && isQuestion(question)) {
       debounceRef.current = setTimeout(() => {
-        const q = transcriptRef.current.slice(-600).trim()
-        if (q && isQuestion(q) && Date.now() - lastAnswerTimeRef.current > 30_000) {
+        const q = currentQRef.current.trim()
+        if (q && isQuestion(q) && Date.now() - lastAnswerTimeRef.current > 20_000) {
+          currentQRef.current = ''  // reset accumulator for next question
           generateAnswerRef.current(q)
         }
-      }, 2000)
+      }, 1500)
     }
   }, [])
 
@@ -549,6 +559,7 @@ function SessionView({ docs, session }: { docs: LocalDocument[]; session: Sessio
     setCurrentQuestion(text.slice(0, 140))
     setGenerating(true)
     lastAnswerTimeRef.current = Date.now()
+    currentQRef.current = ''  // reset accumulator so next question starts fresh
 
     const ctrl = new AbortController()
     abortRef.current   = ctrl

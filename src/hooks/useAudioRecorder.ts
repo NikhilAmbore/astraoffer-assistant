@@ -13,7 +13,7 @@ interface UseAudioRecorderReturn {
   clearTranscript: () => void
 }
 
-const CHUNK_MS = 2500
+const CHUNK_MS = 5000
 const AUDIO_CONSTRAINTS: MediaTrackConstraints = {
   echoCancellation: false,
   noiseSuppression: false,
@@ -139,7 +139,7 @@ export function useAudioRecorder(
     chunksRef.current = []
     recorder.start()
 
-    if (blob.size < 3000) return  // silence / empty chunk
+    if (blob.size < 5000) return  // silence / empty chunk
 
     try {
       const text = await transcribeAudio(blob)
