@@ -197,6 +197,9 @@ function registerIPC() {
   // Renderer calls this when entering session mode — immediate re-assert
   ipcMain.on('enforce-protection', () => enforceProtection())
 
+  ipcMain.on('window:minimize', () => appWindow?.minimize())
+  ipcMain.on('window:close',   () => appWindow?.close())
+
   // Resize window
   ipcMain.on('window:resize', (_e, { width, height }: { width: number; height: number }) => {
     appWindow?.setSize(width, height, true)

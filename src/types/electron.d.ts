@@ -34,6 +34,9 @@ interface ElectronAPI {
   onClaudeChunk:  (cb: (text: string) => void) => void
   groqTranscribe: (p: { buffer: ArrayBuffer }) => Promise<string>
 
+  minimizeWindow?: () => void
+  closeWindow?:    () => void
+
   removeAllListeners: (channel: string) => void
 }
 

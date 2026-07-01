@@ -13,9 +13,41 @@ export default function Login() {
   return (
     <div
       className="min-h-screen flex items-center justify-center"
-      style={{ background: 'linear-gradient(135deg, #0A2540 0%, #0d1b2e 100%)' }}
+      style={{ background: 'linear-gradient(135deg, #0A2540 0%, #0d1b2e 100%)', WebkitAppRegion: 'drag' } as React.CSSProperties}
     >
-      <div className="glass rounded-2xl p-8 w-80 space-y-6">
+      {/* Window controls — top-right corner */}
+      <div style={{
+        position: 'fixed', top: 12, right: 12,
+        display: 'flex', gap: 6,
+        WebkitAppRegion: 'no-drag',
+      } as React.CSSProperties}>
+        <button
+          onClick={() => window.electronAPI?.minimizeWindow?.()}
+          title="Minimize"
+          style={{
+            width: 28, height: 28, borderRadius: '50%',
+            background: 'rgba(255,255,255,0.08)',
+            border: '1px solid rgba(255,255,255,0.12)',
+            color: 'rgba(255,255,255,0.5)',
+            fontSize: 16, lineHeight: 1,
+            cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}
+        >−</button>
+        <button
+          onClick={() => window.electronAPI?.closeWindow?.()}
+          title="Close"
+          style={{
+            width: 28, height: 28, borderRadius: '50%',
+            background: 'rgba(255,255,255,0.08)',
+            border: '1px solid rgba(255,255,255,0.12)',
+            color: 'rgba(255,255,255,0.5)',
+            fontSize: 14, lineHeight: 1,
+            cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}
+        >✕</button>
+      </div>
+
+      <div className="glass rounded-2xl p-8 w-80 space-y-6" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
         {/* Logo */}
         <div className="text-center">
           <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-cyan-400 to-blue-700
@@ -33,7 +65,7 @@ export default function Login() {
               type="email"
               value={email}
               onChange={e => setEmail(e.target.value)}
-              placeholder="amborenikhil46@gmail.com"
+              placeholder="your@email.com"
               required
               autoFocus
               className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm

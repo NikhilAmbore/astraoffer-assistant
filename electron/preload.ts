@@ -40,6 +40,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   groqTranscribe: (p: { buffer: ArrayBuffer }) =>
     ipcRenderer.invoke('groq:transcribe', p),
 
+  minimizeWindow: () => ipcRenderer.send('window:minimize'),
+  closeWindow:    () => ipcRenderer.send('window:close'),
+
   removeAllListeners: (ch: string) =>
     ipcRenderer.removeAllListeners(ch),
 })
