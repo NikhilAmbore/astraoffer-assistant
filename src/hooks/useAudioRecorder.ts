@@ -7,6 +7,7 @@ interface UseAudioRecorderReturn {
   isListening:     boolean
   transcript:      string
   error:           string | null
+  warning:         string | null
   audioSource:     AudioSource
   startListening:  () => Promise<void>
   stopListening:   () => void
@@ -118,6 +119,7 @@ export function useAudioRecorder(
   const [isListening, setIsListening] = useState(false)
   const [transcript,  setTranscript]  = useState('')
   const [error,       setError]       = useState<string | null>(null)
+  const [warn,        setWarn]        = useState<string | null>(null)
   const [audioSource, setAudioSource] = useState<AudioSource>(null)
 
   const recorderRef = useRef<MediaRecorder | null>(null)
@@ -167,7 +169,7 @@ export function useAudioRecorder(
       return
     }
 
-    if (warning) setError(warning)
+    if (warning) setWarn(warning)
 
     streamRef.current = stream
     setAudioSource(source)
@@ -198,5 +200,5 @@ export function useAudioRecorder(
 
   const clearTranscript = useCallback(() => setTranscript(''), [])
 
-  return { isListening, transcript, error, audioSource, startListening, stopListening, clearTranscript }
+  return { isListening, transcript, error, warning: warn, audioSource, startListening, stopListening, clearTranscript }
 }

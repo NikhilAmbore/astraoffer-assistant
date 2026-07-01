@@ -355,8 +355,12 @@ function SessionView({ docs, session }: { docs: LocalDocument[]; session: Sessio
   const [shieldActive,     setShieldActive]     = useState(true)
 
   // Coding solver state
-  const [sessionMode,  setSessionMode]  = useState<'interview' | 'code'>('interview')
-  const [codingLang,   setCodingLang]   = useState<CodingLang>('python')
+  const [sessionMode,  setSessionMode]  = useState<'interview' | 'code'>(
+    () => (localStorage.getItem('ao_session_mode') as 'interview' | 'code') ?? 'interview'
+  )
+  const [codingLang,   setCodingLang]   = useState<CodingLang>(
+    () => (localStorage.getItem('ao_coding_lang') as CodingLang) ?? 'python'
+  )
   const [codeSolving,  setCodeSolving]  = useState(false)
   const [codeRaw,      setCodeRaw]      = useState('')
   const [codeScanning, setCodeScanning] = useState(false)
@@ -733,6 +737,17 @@ function SessionView({ docs, session }: { docs: LocalDocument[]; session: Sessio
         </span>
       </div>
 
+      {/* Warning (mic fallback info — amber, not red) */}
+      {recorder.warning && !recorder.error && (
+        <div style={{
+          padding: '5px 14px', fontSize: 11,
+          color: 'rgba(255,200,80,0.9)',
+          background: 'rgba(255,180,0,0.06)',
+          borderBottom: '1px solid rgba(255,180,0,0.10)',
+          flexShrink: 0,
+        }}>{recorder.warning}</div>
+      )}
+
       {/* Error */}
       {(aiError || recorder.error) && (
         <div style={{
@@ -750,7 +765,7 @@ function SessionView({ docs, session }: { docs: LocalDocument[]; session: Sessio
         borderBottom: '1px solid rgba(255,255,255,0.06)',
       }}>
         {(['interview', 'code'] as const).map(m => (
-          <button key={m} onClick={() => setSessionMode(m)} style={{
+          <button key={m} onClick={() => { setSessionMode(m); localStorage.setItem('ao_session_mode', m) }} style={{
             flex: 1, padding: '6px 0', cursor: 'pointer', fontSize: 10, fontWeight: 700,
             letterSpacing: '0.06em', textTransform: 'uppercase', transition: 'all 0.15s',
             background: sessionMode === m ? 'rgba(255,255,255,0.07)' : 'transparent',
@@ -880,7 +895,7 @@ function SessionView({ docs, session }: { docs: LocalDocument[]; session: Sessio
           flexWrap: 'wrap',
         }}>
           {(CODING_LANGS as readonly string[]).map(lang => (
-            <button key={lang} onClick={() => setCodingLang(lang as CodingLang)} style={{
+            <button key={lang} onClick={() => { setCodingLang(lang as CodingLang); localStorage.setItem('ao_coding_lang', lang) }} style={{
               padding: '2px 7px', borderRadius: 5, cursor: 'pointer',
               fontSize: 9, fontWeight: 700, transition: 'all 0.12s',
               background: codingLang === lang ? 'rgba(255,255,255,0.14)' : 'rgba(255,255,255,0.04)',

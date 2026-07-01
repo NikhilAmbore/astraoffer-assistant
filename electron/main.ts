@@ -216,57 +216,82 @@ function registerIPC() {
   // Renderer can query current protection status
   ipcMain.handle('get-protection-status', () => protectionEnabled)
 
+  // Abort controller for the current Claude stream — cancelled via claude:abort IPC
+  let streamAbort: AbortController | null = null
+  ipcMain.on('claude:abort', () => { streamAbort?.abort(); streamAbort = null })
+
   // Claude streaming (no CORS — Node has no origin restrictions)
   ipcMain.handle('claude:stream', async (event, {
     systemPrompt, userMessage,
   }: { systemPrompt: string; userMessage: string }) => {
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'x-api-key': __CLAUDE_KEY__,
-        'anthropic-version': '2023-06-01',
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-6',
-        max_tokens: 2048,
-        stream: true,
-        system: systemPrompt,
-        // userMessage can be a plain string OR a JSON-encoded content array (for vision)
-        messages: [{
-          role: 'user',
-          content: (() => {
-            try { const p = JSON.parse(userMessage); if (Array.isArray(p)) return p } catch { /* */ }
-            return userMessage
-          })(),
-        }],
-      }),
-    })
+    // Cancel any in-flight stream before starting a new one
+    streamAbort?.abort()
+    const ctrl = new AbortController()
+    streamAbort = ctrl
 
-    if (!res.ok || !res.body) throw new Error(`Claude API error: ${await res.text()}`)
+    let res: Response
+    try {
+      res = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        signal: ctrl.signal,
+        headers: {
+          'x-api-key': __CLAUDE_KEY__,
+          'anthropic-version': '2023-06-01',
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-6',
+          max_tokens: 2048,
+          stream: true,
+          system: systemPrompt,
+          // userMessage can be a plain string OR a JSON-encoded content array (for vision)
+          messages: [{
+            role: 'user',
+            content: (() => {
+              try { const p = JSON.parse(userMessage); if (Array.isArray(p)) return p } catch { /* */ }
+              return userMessage
+            })(),
+          }],
+        }),
+      })
+    } catch (e: any) {
+      streamAbort = null
+      if (e?.name === 'AbortError') return 'aborted'
+      throw e
+    }
+
+    if (!res.ok || !res.body) {
+      streamAbort = null
+      throw new Error(`Claude API error ${res.status}: ${await res.text()}`)
+    }
 
     const sender  = event.sender
     const reader  = (res.body as any).getReader()
     const decoder = new TextDecoder()
     let buf = ''
 
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-      buf += decoder.decode(value, { stream: true })
-      const lines = buf.split('\n')
-      buf = lines.pop() ?? ''
-      for (const line of lines) {
-        if (!line.startsWith('data: ')) continue
-        const data = line.slice(6).trim()
-        if (!data || data === '[DONE]') continue
-        try {
-          const parsed = JSON.parse(data)
-          if (parsed.type === 'content_block_delta' && parsed.delta?.text) {
-            sender.send('claude:chunk', parsed.delta.text)
-          }
-        } catch { /* skip malformed */ }
+    try {
+      while (true) {
+        if (ctrl.signal.aborted) break
+        const { done, value } = await reader.read()
+        if (done) break
+        buf += decoder.decode(value, { stream: true })
+        const lines = buf.split('\n')
+        buf = lines.pop() ?? ''
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue
+          const data = line.slice(6).trim()
+          if (!data || data === '[DONE]') continue
+          try {
+            const parsed = JSON.parse(data)
+            if (parsed.type === 'content_block_delta' && parsed.delta?.text) {
+              sender.send('claude:chunk', parsed.delta.text)
+            }
+          } catch { /* skip malformed */ }
+        }
       }
+    } finally {
+      streamAbort = null
     }
     return 'done'
   })

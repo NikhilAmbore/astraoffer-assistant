@@ -19,7 +19,13 @@ export async function streamAnswer(params: {
   const api = window.electronAPI
   if (!api) throw new Error('Electron API not available')
 
+  // Always clear before registering — prevents listener accumulation on rapid calls
+  api.removeAllListeners('claude:chunk')
   api.onClaudeChunk(params.onChunk)
+
+  // Wire the AbortSignal to cancel the fetch in the main process
+  const abortHandler = () => api.abortStream?.()
+  params.signal?.addEventListener('abort', abortHandler)
 
   try {
     await api.claudeStream({
@@ -27,6 +33,7 @@ export async function streamAnswer(params: {
       userMessage:  params.userMessage,
     })
   } finally {
+    params.signal?.removeEventListener('abort', abortHandler)
     api.removeAllListeners('claude:chunk')
     params.onDone()
   }
@@ -39,6 +46,10 @@ export async function analyzeScreen(
 ): Promise<string> {
   if (!window.electronAPI) return ''
   let result = ''
+
+  // Clear before registering to prevent accumulation
+  window.electronAPI.removeAllListeners('claude:chunk')
+
   await new Promise<void>(resolve => {
     window.electronAPI!.onClaudeChunk(t => { result += t })
     window.electronAPI!.claudeStream({
@@ -50,7 +61,10 @@ export async function analyzeScreen(
     }).then(() => {
       window.electronAPI!.removeAllListeners('claude:chunk')
       resolve()
-    }).catch(() => resolve())
+    }).catch(() => {
+      window.electronAPI!.removeAllListeners('claude:chunk')
+      resolve()
+    })
   })
   return result
 }
