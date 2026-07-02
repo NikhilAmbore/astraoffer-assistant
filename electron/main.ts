@@ -296,6 +296,30 @@ function registerIPC() {
     return 'done'
   })
 
+  // Non-streaming Claude completion — fast lightweight tasks (follow-up suggestions, etc.)
+  ipcMain.handle('claude:complete', async (_e, {
+    systemPrompt, userMessage,
+  }: { systemPrompt: string; userMessage: string }) => {
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'x-api-key': __CLAUDE_KEY__,
+        'anthropic-version': '2023-06-01',
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 256,
+        stream: false,
+        system: systemPrompt,
+        messages: [{ role: 'user', content: userMessage }],
+      }),
+    })
+    if (!res.ok) throw new Error(`Claude API error ${res.status}: ${await res.text()}`)
+    const json = await res.json() as { content?: { text: string }[] }
+    return json.content?.[0]?.text ?? ''
+  })
+
   // Groq Whisper transcription (no CORS)
   ipcMain.handle('groq:transcribe', async (_e, {
     buffer,

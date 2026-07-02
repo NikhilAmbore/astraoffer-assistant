@@ -35,6 +35,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   claudeStream: (p: { systemPrompt: string; userMessage: string }) =>
     ipcRenderer.invoke('claude:stream', p),
+  claudeComplete: (p: { systemPrompt: string; userMessage: string }): Promise<string> =>
+    ipcRenderer.invoke('claude:complete', p),
   onClaudeChunk: (cb: (text: string) => void) =>
     ipcRenderer.on('claude:chunk', (_e, t) => cb(t)),
   groqTranscribe: (p: { buffer: ArrayBuffer }) =>

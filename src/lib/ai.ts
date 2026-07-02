@@ -127,6 +127,33 @@ export interface SessionContext {
   jobDescription: string
 }
 
+// ─── Predict likely follow-up interview questions ─────────────────────────────
+export async function generateFollowUps(
+  question: string,
+  answer: string,
+  session: SessionContext,
+): Promise<string[]> {
+  if (!window.electronAPI) return []
+  try {
+    const text = await window.electronAPI.claudeComplete({
+      systemPrompt:
+        'You are an interview coach. Given an interview answer, predict the 3 most likely follow-up questions the interviewer will ask next. ' +
+        'Return ONLY the 3 questions, numbered 1. 2. 3. — one per line. No intro, no explanation, no commentary.',
+      userMessage:
+        `Role: ${session.position || 'candidate'} at ${session.company || 'company'}\n` +
+        `Question asked: ${question.slice(0, 200)}\n` +
+        `Candidate answered: ${answer.slice(0, 500)}`,
+    })
+    return text
+      .split('\n')
+      .map(l => l.replace(/^\d+[\.\)]\s*/, '').trim())
+      .filter(l => l.length > 10 && l.length < 200)
+      .slice(0, 3)
+  } catch {
+    return []
+  }
+}
+
 // ─── Detect if text is an interview question worth answering ──────────────────
 export function isQuestion(text: string): boolean {
   const t = text.toLowerCase().trim()

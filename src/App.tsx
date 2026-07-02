@@ -1,7 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import { AuthProvider, useAuth } from './lib/auth'
 import { getLocalDocuments, saveLocalDocument, LocalDocument } from './lib/localDocs'
-import { streamAnswer, transcribeAudio, buildSystemPrompt, buildCodingSystemPrompt, analyzeScreen, isQuestion, SessionContext, CODING_LANGS, CodingLang } from './lib/ai'
+import { streamAnswer, transcribeAudio, buildSystemPrompt, buildCodingSystemPrompt, analyzeScreen, isQuestion, generateFollowUps, SessionContext, CODING_LANGS, CodingLang } from './lib/ai'
 import { useAudioRecorder } from './hooks/useAudioRecorder'
 import DocumentUpload from './components/DocumentUpload'
 import Login from './components/Login'
@@ -353,6 +353,9 @@ function SessionView({ docs, session }: { docs: LocalDocument[]; session: Sessio
   const [copied,           setCopied]           = useState(false)
   const [showTranscript,   setShowTranscript]   = useState(true)
   const [shieldActive,     setShieldActive]     = useState(true)
+  const [followUps,        setFollowUps]        = useState<string[]>([])
+  const [followUpsLoading, setFollowUpsLoading] = useState(false)
+  const [qaLog,            setQaLog]            = useState<{q: string; a: string}[]>([])
 
   // Coding solver state
   const [sessionMode,  setSessionMode]  = useState<'interview' | 'code'>(
@@ -582,6 +585,14 @@ function SessionView({ docs, session }: { docs: LocalDocument[]; session: Sessio
           setGenerating(false)
           if (answerRef.current) {
             setHistory(prev => [...prev.slice(-4), answerRef.current])
+            const q = text.slice(0, 200)
+            const a = answerRef.current
+            setQaLog(prev => [...prev, { q, a }])
+            setFollowUps([])
+            setFollowUpsLoading(true)
+            generateFollowUps(q, a, session)
+              .then(fus => { setFollowUps(fus) })
+              .finally(() => setFollowUpsLoading(false))
           }
         },
       })
@@ -667,6 +678,21 @@ function SessionView({ docs, session }: { docs: LocalDocument[]; session: Sessio
     navigator.clipboard.writeText(shownAnswer)
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
+  }
+
+  function exportSession() {
+    if (!qaLog.length) return
+    const header = `AstraOffer Interview Session\n${session.position || 'Interview'} at ${session.company || 'Company'}\n${new Date().toLocaleString()}\n${'═'.repeat(48)}\n\n`
+    const body = qaLog.map(({ q, a }, i) =>
+      `Q${i + 1}: ${q}\n\n${a}\n\n${'─'.repeat(40)}`
+    ).join('\n\n')
+    const blob = new Blob([header + body], { type: 'text/plain' })
+    const url  = URL.createObjectURL(blob)
+    const el   = document.createElement('a')
+    el.href    = url
+    el.download = `interview-${(session.company || 'session').replace(/\s+/g, '-').toLowerCase()}-${Date.now()}.txt`
+    el.click()
+    URL.revokeObjectURL(url)
   }
 
   const isLive = recorder.isListening || pttActive || pttTranscribing
@@ -843,6 +869,46 @@ function SessionView({ docs, session }: { docs: LocalDocument[]; session: Sessio
           )}
         </div>
 
+        {/* Follow-up predictions */}
+        {(followUpsLoading || followUps.length > 0) && historyIdx === -1 && !generating && (
+          <div style={{
+            padding: '5px 14px 6px', flexShrink: 0,
+            borderTop: '1px solid rgba(255,255,255,0.04)',
+          }}>
+            <div style={{ fontSize: 8, fontWeight: 800, letterSpacing: '0.08em', color: 'rgba(255,255,255,0.20)', marginBottom: 4 }}>
+              LIKELY FOLLOW-UPS
+            </div>
+            {followUpsLoading ? (
+              <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.20)', fontStyle: 'italic' }}>Predicting…</span>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                {followUps.map((q, i) => (
+                  <button
+                    key={i}
+                    onClick={() => generateAnswer(q)}
+                    style={{
+                      textAlign: 'left', padding: '4px 9px', borderRadius: 6, cursor: 'pointer',
+                      fontSize: 10, color: 'rgba(255,255,255,0.52)', lineHeight: 1.4,
+                      background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)',
+                      transition: 'all 0.12s',
+                    }}
+                    onMouseEnter={e => {
+                      (e.currentTarget as HTMLButtonElement).style.background = 'rgba(255,255,255,0.09)'
+                      ;(e.currentTarget as HTMLButtonElement).style.color = 'rgba(255,255,255,0.80)'
+                    }}
+                    onMouseLeave={e => {
+                      (e.currentTarget as HTMLButtonElement).style.background = 'rgba(255,255,255,0.04)'
+                      ;(e.currentTarget as HTMLButtonElement).style.color = 'rgba(255,255,255,0.52)'
+                    }}
+                  >
+                    {q}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Style + copy row */}
         <div style={{
           display: 'flex', alignItems: 'center', gap: 5,
@@ -873,6 +939,9 @@ function SessionView({ docs, session }: { docs: LocalDocument[]; session: Sessio
             }}>
               {copied ? '✓' : '⎘'}
             </button>
+          )}
+          {qaLog.length > 0 && (
+            <button onClick={exportSession} style={{ ...IB, fontSize: 9, padding: '0 6px', width: 'auto' }} title="Export session notes">⬇</button>
           )}
           {transcript && (
             <button
