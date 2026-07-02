@@ -1,12 +1,12 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import { AuthProvider, useAuth } from './lib/auth'
 import { getLocalDocuments, saveLocalDocument, LocalDocument } from './lib/localDocs'
-import { streamAnswer, transcribeAudio, buildSystemPrompt, buildCodingSystemPrompt, analyzeScreen, isQuestion, generateFollowUps, SessionContext, CODING_LANGS, CodingLang } from './lib/ai'
+import { streamAnswer, transcribeAudio, buildSystemPrompt, buildCodingSystemPrompt, analyzeScreen, isQuestion, isCodingProblem, generateFollowUps, generateKeyPoints, SessionContext, CODING_LANGS, CodingLang } from './lib/ai'
 import { useAudioRecorder } from './hooks/useAudioRecorder'
 import DocumentUpload from './components/DocumentUpload'
 import Login from './components/Login'
 
-type AppScreen   = 'setup' | 'session'
+type AppScreen   = 'setup' | 'session' | 'practice'
 type ShareMode   = 'overlay-only' | 'full-hidden' | 'off'
 
 const SESSION_KEY = 'ao_session_ctx'
@@ -132,7 +132,10 @@ function Main() {
               onDocsChange={setDocs}
               onSessionChange={saveSession}
               onStart={() => setScreen('session')}
+              onPractice={() => setScreen('practice')}
             />
+          : screen === 'practice'
+          ? <PracticeView docs={docs} session={session} onEnd={() => setScreen('setup')} />
           : <SessionView docs={docs} session={session} />
         }
       </div>
@@ -141,12 +144,13 @@ function Main() {
 }
 
 // ─── Setup view ───────────────────────────────────────────────────────────────
-function SetupView({ docs, session, onDocsChange, onSessionChange, onStart }: {
+function SetupView({ docs, session, onDocsChange, onSessionChange, onStart, onPractice }: {
   docs: LocalDocument[]
   session: SessionContext
   onDocsChange: (d: LocalDocument[]) => void
   onSessionChange: (s: SessionContext) => void
   onStart: () => void
+  onPractice: () => void
 }) {
   const { user } = useAuth()
   const [resumeMode, setResumeMode] = useState<'pdf' | 'text'>(
@@ -331,6 +335,218 @@ function SetupView({ docs, session, onDocsChange, onSessionChange, onStart }: {
       }}>
         Start Interview →
       </button>
+
+      {/* Practice Mode */}
+      <button onClick={onPractice} disabled={!ready} style={{
+        width: '100%', padding: '8px 0', borderRadius: 10, marginTop: 6,
+        cursor: ready ? 'pointer' : 'not-allowed',
+        background: 'transparent',
+        border: ready ? '1px solid rgba(167,139,250,0.22)' : '1px solid rgba(255,255,255,0.05)',
+        color: ready ? 'rgba(167,139,250,0.70)' : 'rgba(255,255,255,0.14)',
+        fontSize: 11, fontWeight: 600, transition: 'all 0.15s',
+      }}>
+        🎭 Practice Run first
+      </button>
+    </div>
+  )
+}
+
+// ─── Practice view ────────────────────────────────────────────────────────────
+function PracticeView({ docs, session, onEnd }: {
+  docs: LocalDocument[]
+  session: SessionContext
+  onEnd: () => void
+}) {
+  const [question,  setQuestion]  = useState('')
+  const [answer,    setAnswer]    = useState('')
+  const [keyPts,    setKeyPts]    = useState<string[]>([])
+  const [speakSec,  setSpeakSec]  = useState(0)
+  const [streaming, setStreaming] = useState(false)
+  const [score,     setScore]     = useState({ good: 0, redo: 0 })
+  const [rated,     setRated]     = useState<'good' | 'redo' | null>(null)
+  const answerRef   = useRef('')
+  const abortRef    = useRef<AbortController | null>(null)
+  const bodyRef     = useRef<HTMLDivElement>(null)
+
+  function renderMd(text: string) {
+    return text
+      .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+      .replace(/`([^`]+)`/g, '<code style="background:rgba(255,255,255,0.10);padding:1px 5px;border-radius:3px;font-size:11px">$1</code>')
+      .replace(/^[-•] (.+)$/gm, '<p style="margin:2px 0 2px 10px">• $1</p>')
+      .replace(/\n/g, '<br/>')
+  }
+
+  async function ask(q: string) {
+    if (!q.trim() || streaming) return
+    abortRef.current?.abort()
+    answerRef.current = ''
+    setAnswer('')
+    setKeyPts([])
+    setSpeakSec(0)
+    setRated(null)
+    setStreaming(true)
+
+    const ctrl = new AbortController()
+    abortRef.current = ctrl
+
+    try {
+      await streamAnswer({
+        systemPrompt: buildSystemPrompt(docs, '', session),
+        userMessage: `TRANSCRIPT (last heard): "${q}"\n\nIdentify the interview question and give a perfect answer. No preamble.`,
+        signal: ctrl.signal,
+        onChunk: chunk => {
+          answerRef.current += chunk
+          setAnswer(answerRef.current)
+          if (bodyRef.current) bodyRef.current.scrollTop = bodyRef.current.scrollHeight
+        },
+        onDone: () => {
+          setStreaming(false)
+          const a = answerRef.current
+          if (a) {
+            const wc = a.split(/\s+/).filter(Boolean).length
+            setSpeakSec(Math.round(wc / 130 * 60))
+            generateKeyPoints(a).then(setKeyPts)
+          }
+        },
+      })
+    } catch {
+      setStreaming(false)
+    }
+  }
+
+  function rate(r: 'good' | 'redo') {
+    setRated(r)
+    setScore(s => ({ ...s, [r]: s[r] + 1 }))
+    if (r === 'redo') {
+      setTimeout(() => ask(question), 300)
+    }
+  }
+
+  const SAMPLE_QS = [
+    'Tell me about yourself.',
+    'Describe a time you led through a crisis.',
+    'What\'s your greatest weakness?',
+    'Why do you want to work here?',
+    'Tell me about a conflict with a coworker.',
+  ]
+
+  return (
+    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+
+      {/* Header */}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 8, padding: '8px 14px',
+        borderBottom: '1px solid rgba(255,255,255,0.06)', flexShrink: 0,
+      }}>
+        <span style={{ fontSize: 11, fontWeight: 700, color: 'rgba(167,139,250,0.80)', flex: 1 }}>
+          🎭 Practice Mode
+        </span>
+        <span style={{ fontSize: 10, color: 'rgba(74,222,128,0.70)', fontWeight: 700 }}>✓ {score.good}</span>
+        <span style={{ fontSize: 10, color: 'rgba(248,113,113,0.70)', fontWeight: 700, marginLeft: 6 }}>↺ {score.redo}</span>
+        <button onClick={onEnd} style={{
+          marginLeft: 8, padding: '3px 10px', borderRadius: 6, cursor: 'pointer', fontSize: 10, fontWeight: 700,
+          background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)', color: 'rgba(255,255,255,0.45)',
+        }}>End</button>
+      </div>
+
+      {/* Key points flash */}
+      {keyPts.length > 0 && (
+        <div style={{
+          padding: '7px 14px 6px', flexShrink: 0,
+          background: 'rgba(124,58,237,0.09)', borderBottom: '1px solid rgba(124,58,237,0.18)',
+        }}>
+          <div style={{ fontSize: 8, fontWeight: 800, letterSpacing: '0.09em', color: 'rgba(167,139,250,0.55)', marginBottom: 5 }}>
+            KEY POINTS — SCAN THESE FIRST
+          </div>
+          {keyPts.map((pt, i) => (
+            <div key={i} style={{ display: 'flex', gap: 7, marginBottom: 3, alignItems: 'flex-start' }}>
+              <span style={{ fontSize: 11, color: 'rgba(167,139,250,0.7)', fontWeight: 800, flexShrink: 0 }}>{['①','②','③'][i]}</span>
+              <span style={{ fontSize: 11.5, fontWeight: 700, color: 'rgba(255,255,255,0.90)', lineHeight: 1.35 }}>{pt}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Answer area */}
+      <div ref={bodyRef} style={{ flex: 1, overflowY: 'auto', padding: '10px 14px', fontSize: 12.5, lineHeight: 1.72, color: 'rgba(255,255,255,0.85)' }}>
+        {answer ? (
+          <>
+            <span dangerouslySetInnerHTML={{ __html: renderMd(answer) }} />
+            {streaming && <span style={{ display: 'inline-block', width: 2, height: 13, marginLeft: 3, borderRadius: 2, background: 'rgba(255,255,255,0.7)', verticalAlign: 'middle' }}/>}
+            {!streaming && speakSec > 0 && (
+              <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 6 }}>
+                <div style={{ flex: 1, height: 2, borderRadius: 2, background: 'rgba(255,255,255,0.07)' }}>
+                  <div style={{
+                    height: '100%', borderRadius: 2,
+                    width: speakSec <= 45 ? '55%' : speakSec <= 65 ? '75%' : '100%',
+                    background: speakSec <= 45 ? 'rgba(74,222,128,0.6)' : speakSec <= 65 ? 'rgba(251,191,36,0.6)' : 'rgba(248,113,113,0.6)',
+                  }}/>
+                </div>
+                <span style={{ fontSize: 9, fontWeight: 700, color: speakSec <= 45 ? 'rgba(74,222,128,0.7)' : speakSec <= 65 ? 'rgba(251,191,36,0.8)' : 'rgba(248,113,113,0.8)', flexShrink: 0 }}>
+                  ~{speakSec}s to speak
+                </span>
+              </div>
+            )}
+          </>
+        ) : (
+          <div>
+            <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.25)', fontStyle: 'italic', marginBottom: 12 }}>
+              Type a practice question below or tap one to start.
+            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+              {SAMPLE_QS.map((q, i) => (
+                <button key={i} onClick={() => { setQuestion(q); ask(q) }} style={{
+                  textAlign: 'left', padding: '7px 10px', borderRadius: 7, cursor: 'pointer',
+                  fontSize: 11, color: 'rgba(255,255,255,0.58)', lineHeight: 1.4,
+                  background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.07)',
+                }}>
+                  {q}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Rate buttons — shown after answer is done */}
+      {answer && !streaming && !rated && (
+        <div style={{ display: 'flex', gap: 6, padding: '6px 14px', flexShrink: 0, borderTop: '1px solid rgba(255,255,255,0.05)' }}>
+          <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.28)', alignSelf: 'center', flex: 1 }}>How did that feel?</span>
+          <button onClick={() => rate('good')} style={{
+            padding: '5px 14px', borderRadius: 7, cursor: 'pointer', fontSize: 11, fontWeight: 700,
+            background: 'rgba(74,222,128,0.10)', border: '1px solid rgba(74,222,128,0.25)', color: 'rgba(74,222,128,0.85)',
+          }}>✓ Good</button>
+          <button onClick={() => rate('redo')} style={{
+            padding: '5px 14px', borderRadius: 7, cursor: 'pointer', fontSize: 11, fontWeight: 700,
+            background: 'rgba(248,113,113,0.08)', border: '1px solid rgba(248,113,113,0.20)', color: 'rgba(248,113,113,0.75)',
+          }}>↺ Redo</button>
+        </div>
+      )}
+      {rated && (
+        <div style={{ padding: '5px 14px', flexShrink: 0, borderTop: '1px solid rgba(255,255,255,0.05)', fontSize: 10, color: rated === 'good' ? 'rgba(74,222,128,0.70)' : 'rgba(248,113,113,0.70)', fontWeight: 700 }}>
+          {rated === 'good' ? '✓ Marked good — next question below' : '↺ Retrying…'}
+        </div>
+      )}
+
+      {/* Input */}
+      <div style={{ display: 'flex', gap: 6, padding: '6px 14px 10px', flexShrink: 0 }}>
+        <input
+          type="text" value={question}
+          onChange={e => setQuestion(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') ask(question) }}
+          placeholder="Type any interview question…"
+          style={{
+            flex: 1, padding: '7px 10px', borderRadius: 8, outline: 'none', fontSize: 11,
+            background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.09)',
+            color: 'rgba(255,255,255,0.82)',
+          }}
+        />
+        <button onClick={() => ask(question)} disabled={!question.trim() || streaming} style={{
+          padding: '7px 12px', borderRadius: 8, cursor: 'pointer', fontSize: 11, fontWeight: 700,
+          background: 'rgba(167,139,250,0.14)', border: '1px solid rgba(167,139,250,0.25)',
+          color: 'rgba(167,139,250,0.85)',
+        }}>Ask →</button>
+      </div>
     </div>
   )
 }
@@ -356,6 +572,10 @@ function SessionView({ docs, session }: { docs: LocalDocument[]; session: Sessio
   const [followUps,        setFollowUps]        = useState<string[]>([])
   const [followUpsLoading, setFollowUpsLoading] = useState(false)
   const [qaLog,            setQaLog]            = useState<{q: string; a: string}[]>([])
+  const [keyPoints,        setKeyPoints]        = useState<string[]>([])
+  const [keyPointsLoading, setKeyPointsLoading] = useState(false)
+  const [speakTime,        setSpeakTime]        = useState(0)
+  const [autoSwitched,     setAutoSwitched]     = useState<'code' | null>(null)
 
   // Coding solver state
   const [sessionMode,  setSessionMode]  = useState<'interview' | 'code'>(
@@ -482,6 +702,15 @@ function SessionView({ docs, session }: { docs: LocalDocument[]; session: Sessio
 
     if (!cooldownElapsed) return
 
+    // Auto-switch to code solver if the transcript sounds like a coding problem
+    if (sessionModeRef.current === 'interview' && isCodingProblem(question)) {
+      setSessionMode('code')
+      sessionModeRef.current = 'code'
+      localStorage.setItem('ao_session_mode', 'code')
+      setAutoSwitched('code')
+      setTimeout(() => setAutoSwitched(null), 3500)
+    }
+
     // After each 5s chunk, schedule a trigger with a 1.5s silence window.
     // This lets the interviewer finish their sentence before we answer.
     if (wordCount >= 6 && isQuestion(question)) {
@@ -588,10 +817,20 @@ function SessionView({ docs, session }: { docs: LocalDocument[]; session: Sessio
             const q = text.slice(0, 200)
             const a = answerRef.current
             setQaLog(prev => [...prev, { q, a }])
+            // Pace guide: ~130 words/min average speaking rate
+            const wordCount = a.split(/\s+/).filter(Boolean).length
+            setSpeakTime(Math.round(wordCount / 130 * 60))
+            // Key points flash
+            setKeyPoints([])
+            setKeyPointsLoading(true)
+            generateKeyPoints(a)
+              .then(pts => setKeyPoints(pts))
+              .finally(() => setKeyPointsLoading(false))
+            // Follow-up predictions
             setFollowUps([])
             setFollowUpsLoading(true)
             generateFollowUps(q, a, session)
-              .then(fus => { setFollowUps(fus) })
+              .then(fus => setFollowUps(fus))
               .finally(() => setFollowUpsLoading(false))
           }
         },
@@ -806,6 +1045,17 @@ function SessionView({ docs, session }: { docs: LocalDocument[]; session: Sessio
         ))}
       </div>
 
+      {/* Auto-switch toast */}
+      {autoSwitched && (
+        <div style={{
+          padding: '5px 14px', fontSize: 10, fontWeight: 700, flexShrink: 0,
+          background: 'rgba(124,58,237,0.14)', borderBottom: '1px solid rgba(124,58,237,0.25)',
+          color: 'rgba(167,139,250,0.95)', letterSpacing: '0.03em',
+        }}>
+          ⚡ Coding problem detected — switched to Code Solver
+        </div>
+      )}
+
       {/* Transcript strip */}
       <div
         onClick={() => setShowTranscript(v => !v)}
@@ -846,6 +1096,37 @@ function SessionView({ docs, session }: { docs: LocalDocument[]; session: Sessio
           </div>
         )}
 
+        {/* Key Points Flash — 3 scannable bullets shown while/after streaming */}
+        {(keyPointsLoading || keyPoints.length > 0) && historyIdx === -1 && (
+          <div style={{
+            padding: '7px 14px 6px', flexShrink: 0,
+            background: 'rgba(124,58,237,0.08)',
+            borderBottom: '1px solid rgba(124,58,237,0.18)',
+          }}>
+            <div style={{ fontSize: 8, fontWeight: 800, letterSpacing: '0.09em', color: 'rgba(167,139,250,0.55)', marginBottom: 5 }}>
+              KEY POINTS — SCAN THESE FIRST
+            </div>
+            {keyPointsLoading ? (
+              <div style={{ display: 'flex', gap: 6 }}>
+                {[60, 80, 50].map((w, i) => (
+                  <div key={i} style={{ height: 8, width: w, borderRadius: 4, background: 'rgba(167,139,250,0.15)', animation: 'pulse 1.4s ease infinite' }}/>
+                ))}
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                {keyPoints.map((pt, i) => (
+                  <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 7 }}>
+                    <span style={{ fontSize: 11, color: 'rgba(167,139,250,0.7)', flexShrink: 0, fontWeight: 800, marginTop: 1 }}>
+                      {['①','②','③'][i]}
+                    </span>
+                    <span style={{ fontSize: 11.5, fontWeight: 700, color: 'rgba(255,255,255,0.90)', lineHeight: 1.35 }}>{pt}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* AI Answer */}
         <div ref={answerBodyRef} style={{
           flex: 1, overflowY: 'auto', padding: '10px 14px',
@@ -860,6 +1141,24 @@ function SessionView({ docs, session }: { docs: LocalDocument[]; session: Sessio
                   borderRadius: 2, verticalAlign: 'middle',
                   background: 'rgba(255,255,255,0.7)',
                 }}/>
+              )}
+              {/* Pace guide — shown once answer is done streaming */}
+              {!generating && speakTime > 0 && historyIdx === -1 && (
+                <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <div style={{ flex: 1, height: 2, borderRadius: 2, background: 'rgba(255,255,255,0.07)', overflow: 'hidden' }}>
+                    <div style={{
+                      height: '100%', borderRadius: 2,
+                      width: speakTime <= 30 ? '30%' : speakTime <= 45 ? '55%' : speakTime <= 60 ? '75%' : '100%',
+                      background: speakTime <= 45 ? 'rgba(74,222,128,0.6)' : speakTime <= 65 ? 'rgba(251,191,36,0.6)' : 'rgba(248,113,113,0.6)',
+                    }}/>
+                  </div>
+                  <span style={{
+                    fontSize: 9, fontWeight: 700, letterSpacing: '0.04em', flexShrink: 0,
+                    color: speakTime <= 45 ? 'rgba(74,222,128,0.7)' : speakTime <= 65 ? 'rgba(251,191,36,0.8)' : 'rgba(248,113,113,0.8)',
+                  }}>
+                    ~{speakTime}s to speak
+                  </span>
+                </div>
               )}
             </>
           ) : (

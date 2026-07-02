@@ -127,6 +127,80 @@ export interface SessionContext {
   jobDescription: string
 }
 
+// ─── Company intelligence — inject culture/values into the system prompt ─────
+const COMPANY_INTEL: Record<string, string> = {
+  google:    'Google values: Think 10x, user-first, data-driven, launch early & iterate. Leadership principles: clarity, inclusion, results. Known for rigorous system design, scalability, and structured behaviorals using STAR.',
+  alphabet:  'Google/Alphabet values: Think 10x, user-first, data-driven, launch early & iterate.',
+  meta:      'Meta values: Move fast, be bold, focus on long-term impact, build genuine connections. Known for product sense, growth metrics, cross-functional influence, and A/B testing culture.',
+  facebook:  'Meta/Facebook values: Move fast, be bold, focus on impact. Product sense and data-driven growth matter most.',
+  apple:     'Apple values: Craft over speed, privacy by design, say no to 99% of ideas. Known for relentless polish, user experience obsession, and building tools that "just work."',
+  amazon:    'Amazon 16 Leadership Principles: Customer Obsession, Ownership, Invent and Simplify, Are Right A Lot, Learn and Be Curious, Hire and Develop the Best, Insist on Highest Standards, Think Big, Bias for Action, Frugality, Earn Trust, Dive Deep, Have Backbone Disagree and Commit, Deliver Results, Strive to be Earth\'s Best Employer, Success and Scale Bring Broad Responsibility. Use the STAR format — interviewers explicitly score against these principles.',
+  microsoft: 'Microsoft values: Growth mindset (Carol Dweck), learn-it-all beats know-it-all, Respect/Integrity/Accountability. Known for collaboration, inclusive design, and long-term platform thinking.',
+  stripe:    'Stripe values: Users first (developers), move with rigor (not just speed), long-term compounding, high craft in writing and code. Known for strong writing culture, documentation quality, and solving hard infrastructure problems.',
+  openai:    'OpenAI mission: safe and beneficial AI for humanity. Values: capability paired with safety, iterative deployment, long-term thinking. Known for ML research depth, alignment thinking, and scaling challenges.',
+  netflix:   'Netflix Culture: Freedom and Responsibility, keeper test (would we fight to keep this person?), Context not Control, high performance density. Known for radical candor, no bureaucracy, senior ICs treated like adults.',
+  airbnb:    'Airbnb values: Champion the mission (belong anywhere), Be a Host (care for others), Embrace the Adventure (be curious). Known for strong design thinking, community impact, and belonging as a product principle.',
+  uber:      'Uber values: Build with Heart, Make Big Bold Bets, Champion Inclusion, Persevere. Known for marketplace systems, driver/rider balance, and global scale operations.',
+  spotify:   'Spotify values: Be Passionate, Be Human, Be Innovative, Be Collaborative. Squad model: autonomous cross-functional teams. Known for music intelligence, personalization at scale.',
+  shopify:   'Shopify values: Build for the long term, make commerce better for everyone. Known for empowering small merchants, async-first communication, and crafting tools developers love.',
+  linkedin:  'LinkedIn values: Members first, relationships matter, be open and honest. Known for professional network effects, feed ranking, and economic opportunity for all.',
+  salesforce: 'Salesforce values: Trust, Customer Success, Innovation, Equality. Known for CRM leadership, cloud-first thinking, and Ohana (family) culture.',
+  twitter:   'X/Twitter values: Think of Twitter as a public square, free expression, move fast. Known for distributed systems at scale, real-time data pipelines.',
+  x:         'X (Twitter) values: Free expression, real-time information, move fast. Known for distributed systems, real-time feeds, and ad revenue models.',
+  palantir:  'Palantir values: Privacy, rigor, working on hard problems that matter. Known for data integration, government + enterprise clients, and hiring engineers who think deeply.',
+  databricks: 'Databricks values: Customer obsession, simple and powerful products, transparency. Known for Spark ecosystem, data lakehouse architecture, and ML platform leadership.',
+  snowflake: 'Snowflake values: Put customers first, integrity, embrace each other, think big. Known for cloud data warehousing, pay-per-use model, and data sharing.',
+  coinbase:  'Coinbase mission: increase economic freedom. Values: act like an owner, be direct, efficient execution. Known for crypto infrastructure, compliance rigor, regulated environment.',
+  figma:     'Figma values: Be open, be bold, be kind. Known for browser-based design, multiplayer collaboration, and developer handoff. Design and engineering collaboration is core.',
+  notion:    'Notion values: Make toolmaking accessible, be curious, high craft. Known for flexible block-based docs, second brain culture, creator community.',
+}
+
+export function getCompanyIntel(company: string): string {
+  const key = company.toLowerCase().replace(/[^a-z]/g, '')
+  // Try exact match first, then prefix match
+  if (COMPANY_INTEL[key]) return COMPANY_INTEL[key]
+  const partial = Object.keys(COMPANY_INTEL).find(k => key.includes(k) || k.includes(key))
+  return partial ? COMPANY_INTEL[partial] : ''
+}
+
+// ─── Detect if transcript contains a coding problem (auto-switch to code mode) ─
+export function isCodingProblem(text: string): boolean {
+  const t = text.toLowerCase()
+  const signals = [
+    'implement a function', 'write a function', 'write code', 'write a program',
+    'implement an algorithm', 'implement the function', 'implement this function',
+    'code a solution', 'function that takes', 'function that returns',
+    'given an array of', 'given a string', 'given a linked list', 'given a list of',
+    'binary search', 'dynamic programming', 'sliding window', 'two pointers',
+    'depth first', 'breadth first', 'bfs', 'dfs', 'leetcode', 'hackerrank',
+    'coderpad', 'coding problem', 'coding question', 'find the missing',
+    'reverse a linked list', 'merge two sorted', 'valid parentheses',
+    'longest substring', 'maximum subarray', 'detect a cycle',
+  ]
+  return signals.some(s => t.includes(s))
+}
+
+// ─── Extract 3 key bullet points from a full answer (for fast scanning) ────────
+export async function generateKeyPoints(answer: string): Promise<string[]> {
+  if (!window.electronAPI) return []
+  try {
+    const text = await window.electronAPI.claudeComplete({
+      systemPrompt:
+        'Extract the 3 most important points from this interview answer as ultra-short bullets. ' +
+        'Each bullet: MAX 8 words. Start each with a strong verb or key number. ' +
+        'Format: exactly 3 lines, no numbers, no dashes, no intro text.',
+      userMessage: answer.slice(0, 600),
+    })
+    return text
+      .split('\n')
+      .map(l => l.replace(/^[-•*\d.)\s]+/, '').trim())
+      .filter(l => l.length > 4)
+      .slice(0, 3)
+  } catch {
+    return []
+  }
+}
+
 // ─── Predict likely follow-up interview questions ─────────────────────────────
 export async function generateFollowUps(
   question: string,
@@ -218,11 +292,14 @@ export function buildSystemPrompt(
   const resumeText = resumeDoc?.text_content?.trim() || 'Not provided'
   const jdText     = session.jobDescription || jdDoc?.text_content?.trim() || 'Not provided'
 
+  const companyIntel = getCompanyIntel(session.company || '')
+
   return `You are a real-time AI interview co-pilot. The user is in a live job interview RIGHT NOW. Give a perfect, ready-to-speak answer in seconds.
 
 ═══ CANDIDATE CONTEXT ═══
 Company: ${session.company || 'Not specified'}
 Role: ${session.position || 'Not specified'}
+${companyIntel ? `\nCOMPANY CULTURE & VALUES:\n${companyIntel}\n\nTailor every answer to reflect these values — reference them naturally without quoting them verbatim.` : ''}
 
 RESUME:
 ${resumeText}
