@@ -357,16 +357,29 @@ function PracticeView({ docs, session, onEnd }: {
   session: SessionContext
   onEnd: () => void
 }) {
-  const [question,  setQuestion]  = useState('')
-  const [answer,    setAnswer]    = useState('')
-  const [keyPts,    setKeyPts]    = useState<string[]>([])
-  const [speakSec,  setSpeakSec]  = useState(0)
-  const [streaming, setStreaming] = useState(false)
-  const [score,     setScore]     = useState({ good: 0, redo: 0 })
-  const [rated,     setRated]     = useState<'good' | 'redo' | null>(null)
-  const answerRef   = useRef('')
-  const abortRef    = useRef<AbortController | null>(null)
-  const bodyRef     = useRef<HTMLDivElement>(null)
+  const [question,   setQuestion]   = useState('')
+  const [answer,     setAnswer]     = useState('')
+  const [keyPts,     setKeyPts]     = useState<string[]>([])
+  const [speakSec,   setSpeakSec]   = useState(0)
+  const [streaming,  setStreaming]  = useState(false)
+  const [score,      setScore]      = useState({ good: 0, redo: 0 })
+  const [rated,      setRated]      = useState<'good' | 'redo' | null>(null)
+  const [style,      setStyle]      = useState<'normal' | 'short' | 'star'>('normal')
+  const [pttActive,  setPttActive]  = useState(false)
+  const [pttLoading, setPttLoading] = useState(false)
+  const answerRef  = useRef('')
+  const abortRef   = useRef<AbortController | null>(null)
+  const pttRef     = useRef<{ recorder: MediaRecorder; chunks: Blob[] } | null>(null)
+  const bodyRef    = useRef<HTMLDivElement>(null)
+
+  // Abort any in-flight stream when component unmounts (e.g. user clicks "End")
+  useEffect(() => () => { abortRef.current?.abort() }, [])
+
+  function styleInstruction(s: 'normal' | 'short' | 'star') {
+    if (s === 'short') return '\n\nIMPORTANT: Keep your answer to 2 sentences max. Ultra concise.'
+    if (s === 'star')  return '\n\nIMPORTANT: Use clear STAR structure — Situation, Action with specifics, Result with a number.'
+    return ''
+  }
 
   function renderMd(text: string) {
     return text
@@ -374,6 +387,39 @@ function PracticeView({ docs, session, onEnd }: {
       .replace(/`([^`]+)`/g, '<code style="background:rgba(255,255,255,0.10);padding:1px 5px;border-radius:3px;font-size:11px">$1</code>')
       .replace(/^[-•] (.+)$/gm, '<p style="margin:2px 0 2px 10px">• $1</p>')
       .replace(/\n/g, '<br/>')
+  }
+
+  async function pttStart() {
+    if (pttRef.current || streaming) return
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const rec    = new MediaRecorder(stream, { mimeType: 'audio/webm' })
+      const chunks: Blob[] = []
+      rec.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data) }
+      rec.start(100)
+      pttRef.current = { recorder: rec, chunks }
+      setPttActive(true)
+    } catch { /* mic denied */ }
+  }
+
+  async function pttStop() {
+    if (!pttRef.current) return
+    const { recorder: rec, chunks } = pttRef.current
+    pttRef.current = null
+    setPttActive(false)
+    rec.stop()
+    await new Promise<void>(r => rec.addEventListener('stop', () => r(), { once: true }))
+    rec.stream.getTracks().forEach(t => t.stop())
+    if (!chunks.length) return
+    const blob = new Blob(chunks, { type: 'audio/webm' })
+    if (blob.size < 3000) return
+    setPttLoading(true)
+    try {
+      const text = await transcribeAudio(blob)
+      if (text) { setQuestion(text); ask(text) }
+    } finally {
+      setPttLoading(false)
+    }
   }
 
   async function ask(q: string) {
@@ -391,7 +437,7 @@ function PracticeView({ docs, session, onEnd }: {
 
     try {
       await streamAnswer({
-        systemPrompt: buildSystemPrompt(docs, '', session),
+        systemPrompt: buildSystemPrompt(docs, '', session) + styleInstruction(style),
         userMessage: `TRANSCRIPT (last heard): "${q}"\n\nIdentify the interview question and give a perfect answer. No preamble.`,
         signal: ctrl.signal,
         onChunk: chunk => {
@@ -435,16 +481,26 @@ function PracticeView({ docs, session, onEnd }: {
 
       {/* Header */}
       <div style={{
-        display: 'flex', alignItems: 'center', gap: 8, padding: '8px 14px',
-        borderBottom: '1px solid rgba(255,255,255,0.06)', flexShrink: 0,
+        display: 'flex', alignItems: 'center', gap: 6, padding: '7px 14px',
+        borderBottom: '1px solid rgba(255,255,255,0.06)', flexShrink: 0, flexWrap: 'wrap',
       }}>
-        <span style={{ fontSize: 11, fontWeight: 700, color: 'rgba(167,139,250,0.80)', flex: 1 }}>
-          🎭 Practice Mode
-        </span>
+        <span style={{ fontSize: 11, fontWeight: 700, color: 'rgba(167,139,250,0.80)' }}>🎭 Practice</span>
+        {/* Style selector */}
+        {(['normal','short','star'] as const).map(s => (
+          <button key={s} onClick={() => setStyle(s)} style={{
+            padding: '2px 8px', borderRadius: 999, cursor: 'pointer', fontSize: 9, fontWeight: 700,
+            background: style === s ? 'rgba(255,255,255,0.13)' : 'rgba(255,255,255,0.04)',
+            border: style === s ? '1px solid rgba(255,255,255,0.22)' : '1px solid rgba(255,255,255,0.07)',
+            color: style === s ? 'rgba(255,255,255,0.85)' : 'rgba(255,255,255,0.30)',
+          }}>
+            {s === 'normal' ? 'Normal' : s === 'short' ? 'Short' : 'STAR'}
+          </button>
+        ))}
+        <div style={{ flex: 1 }}/>
         <span style={{ fontSize: 10, color: 'rgba(74,222,128,0.70)', fontWeight: 700 }}>✓ {score.good}</span>
-        <span style={{ fontSize: 10, color: 'rgba(248,113,113,0.70)', fontWeight: 700, marginLeft: 6 }}>↺ {score.redo}</span>
+        <span style={{ fontSize: 10, color: 'rgba(248,113,113,0.70)', fontWeight: 700 }}>↺ {score.redo}</span>
         <button onClick={onEnd} style={{
-          marginLeft: 8, padding: '3px 10px', borderRadius: 6, cursor: 'pointer', fontSize: 10, fontWeight: 700,
+          padding: '3px 10px', borderRadius: 6, cursor: 'pointer', fontSize: 10, fontWeight: 700,
           background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)', color: 'rgba(255,255,255,0.45)',
         }}>End</button>
       </div>
@@ -530,11 +586,24 @@ function PracticeView({ docs, session, onEnd }: {
 
       {/* Input */}
       <div style={{ display: 'flex', gap: 6, padding: '6px 14px 10px', flexShrink: 0 }}>
+        <button
+          onMouseDown={pttStart} onMouseUp={pttStop} onMouseLeave={pttStop}
+          title="Hold to speak your question (mic)"
+          style={{
+            padding: '7px 10px', borderRadius: 8, cursor: 'pointer', fontSize: 11, fontWeight: 700,
+            userSelect: 'none', flexShrink: 0,
+            background: pttActive ? 'rgba(255,80,80,0.18)' : pttLoading ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.05)',
+            border: pttActive ? '1px solid rgba(255,80,80,0.35)' : '1px solid rgba(255,255,255,0.09)',
+            color: pttActive ? 'rgba(255,120,120,0.90)' : pttLoading ? 'rgba(255,255,255,0.45)' : 'rgba(255,255,255,0.35)',
+          }}
+        >
+          {pttActive ? '● Rec' : pttLoading ? '⟳' : '🎙'}
+        </button>
         <input
           type="text" value={question}
           onChange={e => setQuestion(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter') ask(question) }}
-          placeholder="Type any interview question…"
+          placeholder="Type or hold 🎙 to speak a question…"
           style={{
             flex: 1, padding: '7px 10px', borderRadius: 8, outline: 'none', fontSize: 11,
             background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.09)',
@@ -571,7 +640,9 @@ function SessionView({ docs, session }: { docs: LocalDocument[]; session: Sessio
   const [shieldActive,     setShieldActive]     = useState(true)
   const [followUps,        setFollowUps]        = useState<string[]>([])
   const [followUpsLoading, setFollowUpsLoading] = useState(false)
-  const [qaLog,            setQaLog]            = useState<{q: string; a: string}[]>([])
+  const [qaLog,            setQaLog]            = useState<{q: string; a: string}[]>(() => {
+    try { return JSON.parse(localStorage.getItem('ao_qa_log') || '[]') } catch { return [] }
+  })
   const [keyPoints,        setKeyPoints]        = useState<string[]>([])
   const [keyPointsLoading, setKeyPointsLoading] = useState(false)
   const [speakTime,        setSpeakTime]        = useState(0)
@@ -709,6 +780,9 @@ function SessionView({ docs, session }: { docs: LocalDocument[]; session: Sessio
       localStorage.setItem('ao_session_mode', 'code')
       setAutoSwitched('code')
       setTimeout(() => setAutoSwitched(null), 3500)
+      // Auto-capture screen + solve immediately after switch
+      setTimeout(() => scanAndSolveRef.current(), 600)
+      return  // let the code solver handle it, skip interview answer
     }
 
     // After each 5s chunk, schedule a trigger with a 1.5s silence window.
@@ -796,6 +870,12 @@ function SessionView({ docs, session }: { docs: LocalDocument[]; session: Sessio
     setGenerating(true)
     lastAnswerTimeRef.current = Date.now()
     currentQRef.current = ''  // reset accumulator so next question starts fresh
+    // Clear stale feature state from previous answer
+    setKeyPoints([])
+    setKeyPointsLoading(false)
+    setSpeakTime(0)
+    setFollowUps([])
+    setFollowUpsLoading(false)
 
     const ctrl = new AbortController()
     abortRef.current   = ctrl
@@ -816,7 +896,11 @@ function SessionView({ docs, session }: { docs: LocalDocument[]; session: Sessio
             setHistory(prev => [...prev.slice(-4), answerRef.current])
             const q = text.slice(0, 200)
             const a = answerRef.current
-            setQaLog(prev => [...prev, { q, a }])
+            setQaLog(prev => {
+              const updated = [...prev, { q, a }]
+              try { localStorage.setItem('ao_qa_log', JSON.stringify(updated.slice(-50))) } catch { /* quota */ }
+              return updated
+            })
             // Pace guide: ~130 words/min average speaking rate
             const wordCount = a.split(/\s+/).filter(Boolean).length
             setSpeakTime(Math.round(wordCount / 130 * 60))
@@ -1240,7 +1324,15 @@ function SessionView({ docs, session }: { docs: LocalDocument[]; session: Sessio
             </button>
           )}
           {qaLog.length > 0 && (
-            <button onClick={exportSession} style={{ ...IB, fontSize: 9, padding: '0 6px', width: 'auto' }} title="Export session notes">⬇</button>
+            <button
+              onClick={() => {
+                exportSession()
+                setQaLog([])
+                localStorage.removeItem('ao_qa_log')
+              }}
+              style={{ ...IB, fontSize: 9, padding: '0 6px', width: 'auto' }}
+              title={`Export & clear session (${qaLog.length} Q&As)`}
+            >⬇{qaLog.length}</button>
           )}
           {transcript && (
             <button

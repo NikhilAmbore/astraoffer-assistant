@@ -74,11 +74,13 @@ export const CODING_LANGS = ['python', 'javascript', 'typescript', 'java', 'cpp'
 export type CodingLang = typeof CODING_LANGS[number]
 
 export function buildCodingSystemPrompt(language: string, session: SessionContext): string {
+  const companyIntel = getCompanyIntel(session.company || '')
   return `You are a real-time coding interview co-pilot. The user is in a LIVE coding interview RIGHT NOW. They must write code AND explain it out loud simultaneously. Give them a complete coaching sheet they can follow top-to-bottom while coding.
 
 Candidate context:
 - Role: ${session.position || 'Software Engineer'}
 - Company: ${session.company || 'a tech company'}
+${companyIntel ? `- Company culture: ${companyIntel.slice(0, 200)}` : ''}
 
 OUTPUT — use EXACTLY these five section headers (### prefix, all caps):
 
