@@ -15,6 +15,7 @@ export async function streamAnswer(params: {
   onChunk: (text: string) => void
   onDone: () => void
   signal?: AbortSignal
+  counted?: boolean  // false = screen analysis / secondary calls that don't burn quota
 }): Promise<void> {
   const api = window.electronAPI
   if (!api) throw new Error('Electron API not available')
@@ -28,10 +29,12 @@ export async function streamAnswer(params: {
   params.signal?.addEventListener('abort', abortHandler)
 
   try {
-    await api.claudeStream({
+    const result = await api.claudeStream({
       systemPrompt: params.systemPrompt,
       userMessage:  params.userMessage,
+      counted: params.counted ?? true,
     })
+    if (result === 'limit') throw new Error('USAGE_LIMIT')
   } finally {
     params.signal?.removeEventListener('abort', abortHandler)
     api.removeAllListeners('claude:chunk')
@@ -54,6 +57,7 @@ export async function analyzeScreen(
     window.electronAPI!.onClaudeChunk(t => { result += t })
     window.electronAPI!.claudeStream({
       systemPrompt: 'You are analyzing a meeting screen. Be brief — one sentence max.',
+      counted: false,
       userMessage: JSON.stringify([
         { type: 'image', source: { type: 'base64', media_type: 'image/png', data: base64DataUrl.split(',')[1] } },
         { type: 'text', text: `Question: "${question}". What on screen is relevant?` },

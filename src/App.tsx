@@ -647,6 +647,7 @@ function SessionView({ docs, session }: { docs: LocalDocument[]; session: Sessio
   const [keyPointsLoading, setKeyPointsLoading] = useState(false)
   const [speakTime,        setSpeakTime]        = useState(0)
   const [autoSwitched,     setAutoSwitched]     = useState<'code' | null>(null)
+  const [usageStatus,      setUsageStatus]      = useState<{ answersToday: number; limit: number; canAnswer: boolean; plan: string } | null>(null)
 
   // Coding solver state
   const [sessionMode,  setSessionMode]  = useState<'interview' | 'code'>(
@@ -706,6 +707,11 @@ function SessionView({ docs, session }: { docs: LocalDocument[]; session: Sessio
     window.electronAPI?.getProtectionStatus().then(v => setShieldActive(v ?? true))
     window.electronAPI?.onProtectionStatus(v => setShieldActive(v))
     return () => window.electronAPI?.removeAllListeners('protection-status')
+  }, [])
+
+  // Load and refresh usage counter
+  useEffect(() => {
+    window.electronAPI?.getUsageStatus().then(s => { if (s) setUsageStatus(s) })
   }, [])
 
   // Global hotkeys
@@ -861,6 +867,14 @@ function SessionView({ docs, session }: { docs: LocalDocument[]; session: Sessio
   }
 
   const generateAnswer = useCallback(async (text: string) => {
+    // Check usage limit before calling Claude
+    const usage = await window.electronAPI?.getUsageStatus()
+    if (usage) setUsageStatus(usage)
+    if (usage && !usage.canAnswer) {
+      setAiError(`Daily limit reached (${usage.answersToday}/${usage.limit} answers used). Upgrade to Pro for unlimited.`)
+      return
+    }
+
     setAiError('')
     abortRef.current?.abort()
     answerRef.current = ''
@@ -916,12 +930,22 @@ function SessionView({ docs, session }: { docs: LocalDocument[]; session: Sessio
             generateFollowUps(q, a, session)
               .then(fus => setFollowUps(fus))
               .finally(() => setFollowUpsLoading(false))
+            // Refresh usage after answer consumed
+            window.electronAPI?.getUsageStatus().then(s => { if (s) setUsageStatus(s) })
           }
         },
       })
     } catch (e) {
       setGenerating(false)
-      if (e instanceof Error && e.name !== 'AbortError') setAiError(e.message)
+      if (e instanceof Error && e.name !== 'AbortError') {
+        if (e.message === 'USAGE_LIMIT') {
+          window.electronAPI?.getUsageStatus().then(s => {
+            if (s) { setUsageStatus(s); setAiError(`Daily limit reached (${s.answersToday}/${s.limit}). Upgrade to Pro for unlimited.`) }
+          })
+        } else {
+          setAiError(e.message)
+        }
+      }
     }
   }, [docs, screenCtx, session, answerStyle])
 
@@ -1055,6 +1079,24 @@ function SessionView({ docs, session }: { docs: LocalDocument[]; session: Sessio
         >
           {shieldActive ? '🛡' : '⚠️ EXPOSED'}
         </span>
+        {/* Usage meter */}
+        {usageStatus && (
+          <span
+            title={usageStatus.canAnswer ? `${usageStatus.answersToday} of ${usageStatus.limit} AI answers used today` : 'Daily limit reached — upgrade to Pro for unlimited'}
+            style={{
+              fontSize: 10, fontWeight: 700, letterSpacing: '0.03em',
+              color: usageStatus.canAnswer
+                ? (usageStatus.answersToday >= usageStatus.limit - 2 ? 'rgba(255,180,60,0.90)' : 'rgba(255,255,255,0.38)')
+                : 'rgba(255,80,80,0.90)',
+              padding: '2px 6px', borderRadius: 4,
+              background: usageStatus.canAnswer ? 'rgba(255,255,255,0.05)' : 'rgba(255,0,0,0.10)',
+              border: usageStatus.canAnswer ? '1px solid rgba(255,255,255,0.08)' : '1px solid rgba(255,0,0,0.22)',
+              cursor: 'default',
+            }}
+          >
+            {usageStatus.answersToday}/{usageStatus.limit}
+          </span>
+        )}
         <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
           {history.length > 1 && (
             <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.22)', marginRight: 2 }}>

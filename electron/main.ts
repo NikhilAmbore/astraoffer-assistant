@@ -16,6 +16,43 @@ import {
   systemPreferences,
 } from 'electron'
 import path from 'path'
+import fs   from 'fs'
+
+// ─── Usage tracking ───────────────────────────────────────────────────────────
+interface UsageDay  { answers: number }
+interface UsageData { [date: string]: UsageDay }
+
+const FREE_DAILY_LIMIT = 10
+
+function usageFilePath() {
+  return path.join(app.getPath('userData'), 'ao_usage.json')
+}
+
+function readUsage(): UsageData {
+  try { return JSON.parse(fs.readFileSync(usageFilePath(), 'utf8')) as UsageData }
+  catch { return {} }
+}
+
+function writeUsage(data: UsageData) {
+  try { fs.writeFileSync(usageFilePath(), JSON.stringify(data), 'utf8') } catch {}
+}
+
+function todayKey() { return new Date().toISOString().slice(0, 10) }
+
+function getDailyAnswers() { return readUsage()[todayKey()]?.answers ?? 0 }
+
+function incrementDailyAnswers(): number {
+  const data = readUsage()
+  const key  = todayKey()
+  const day  = data[key] ?? { answers: 0 }
+  day.answers += 1
+  data[key] = day
+  // Prune entries older than 7 days
+  const cutoff = new Date(Date.now() - 7 * 86_400_000).toISOString().slice(0, 10)
+  for (const k of Object.keys(data)) { if (k < cutoff) delete data[k] }
+  writeUsage(data)
+  return day.answers
+}
 
 let appWindow: BrowserWindow | null = null
 let tray: Tray | null = null
@@ -216,14 +253,27 @@ function registerIPC() {
   // Renderer can query current protection status
   ipcMain.handle('get-protection-status', () => protectionEnabled)
 
+  // Daily usage counter
+  ipcMain.handle('usage:status', () => {
+    const answersToday = getDailyAnswers()
+    return { answersToday, limit: FREE_DAILY_LIMIT, canAnswer: answersToday < FREE_DAILY_LIMIT, plan: 'free' }
+  })
+
   // Abort controller for the current Claude stream — cancelled via claude:abort IPC
   let streamAbort: AbortController | null = null
   ipcMain.on('claude:abort', () => { streamAbort?.abort(); streamAbort = null })
 
   // Claude streaming (no CORS — Node has no origin restrictions)
   ipcMain.handle('claude:stream', async (event, {
-    systemPrompt, userMessage,
-  }: { systemPrompt: string; userMessage: string }) => {
+    systemPrompt, userMessage, counted = true,
+  }: { systemPrompt: string; userMessage: string; counted?: boolean }) => {
+    // Gate counted requests (answers, code solves, practice) against daily limit
+    if (counted) {
+      const today = getDailyAnswers()
+      if (today >= FREE_DAILY_LIMIT) return 'limit'
+      incrementDailyAnswers()
+    }
+
     // Cancel any in-flight stream before starting a new one
     streamAbort?.abort()
     const ctrl = new AbortController()

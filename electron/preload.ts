@@ -33,8 +33,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setScreenShareMode: (mode: 'overlay-only' | 'full-hidden' | 'off') =>
     ipcRenderer.invoke('set-screen-share-mode', mode),
 
-  claudeStream: (p: { systemPrompt: string; userMessage: string }) =>
+  claudeStream: (p: { systemPrompt: string; userMessage: string; counted?: boolean }) =>
     ipcRenderer.invoke('claude:stream', p),
+  getUsageStatus: (): Promise<{ answersToday: number; limit: number; canAnswer: boolean; plan: string }> =>
+    ipcRenderer.invoke('usage:status'),
   claudeComplete: (p: { systemPrompt: string; userMessage: string }): Promise<string> =>
     ipcRenderer.invoke('claude:complete', p),
   onClaudeChunk: (cb: (text: string) => void) =>
